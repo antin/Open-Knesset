@@ -168,8 +168,10 @@ class VoteAction(models.Model):
         return u"{} {} {}".format(self.member.name, self.type, self.vote.title)
 
     def save(self, **kwargs):
-        if not self.party and not self.party_id:
-            self.party_id = self.member.party_at(self.vote.time)
+        if not self.party_id:
+            party = self.member.party_at(self.vote.time.date())
+            if party:
+                self.party_id = party.id
         super(VoteAction,self).save(**kwargs)
 
 class VoteManager(models.Manager):
