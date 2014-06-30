@@ -22,15 +22,21 @@ class SimpleTest(TestCase):
                                             knesset=self.knesset)
         self.mk_1 = Member.objects.create(name='mk_1',
                                           start_date=datetime.date(2010,1,1),
+                                          end_date=datetime.date(2012,1,1),
                                           current_party=self.party_1)
         self.mk_2 = Member.objects.create(name='mk_2',
-                                          start_date=datetime.date(2010,1,1),
+                                          start_date=datetime.date(2013,1,1),
                                           current_party=self.party_1)
 	# create new mk for the 19's knesset 
  	self.mk_from_knesset_19 = Member.objects.create(name='mk_from_knesset_19',
                                           start_date=datetime.date(2013,1,1),
                                           current_party=self.party_1)
 
+	# create new mk which where in the 19's knesset for only 6 weeks
+ 	self.mk_where_6_weeks_in_knesset_19 = Member.objects.create(name='mk_where_6_weeks_in_knesset_19',
+                                          start_date=datetime.date(2013,1,1),
+                                          end_date=datetime.date(2013,2,16),
+                                          current_party=self.party_1)
 
         Membership.objects.create(member=self.mk_1, party=self.party_1)
         Membership.objects.create(member=self.mk_2, party=self.party_1)
@@ -65,16 +71,11 @@ class SimpleTest(TestCase):
 	self.vote_4 = Vote.objects.create(title='vote 4',time=datetime.datetime.now())
 
         self.bill_1 = Bill.objects.create(stage='1', title='bill 1', popular_name='kill bill')
-<<<<<<< HEAD
-        self.voteaction_1 = VoteAction.objects.create(vote=self.vote_1, member=self.mk_1, type='for')
-        self.voteaction_2 = VoteAction.objects.create(vote=self.vote_2, member=self.mk_1, type='for')
-        self.voteaction_3 = VoteAction.objects.create(vote=self.vote_3, member=self.mk_2, type='for')
-	self.voteaction_4 = VoteAction.objects.create(vote=self.vote_4, member=self.mk_from_knesset_19, type='for')
-=======
+
         self.voteaction_1 = VoteAction.objects.create(vote=self.vote_1, member=self.mk_1, type='for', party=self.mk_1.current_party)
         self.voteaction_2 = VoteAction.objects.create(vote=self.vote_2, member=self.mk_1, type='for', party=self.mk_1.current_party)
         self.voteaction_3 = VoteAction.objects.create(vote=self.vote_3, member=self.mk_2, type='for', party=self.mk_2.current_party)
->>>>>>> 796e5d0abf992ab281e59d69eb376b3a9daefaf6
+
 
         self.vote_1. update_vote_properties()
         self.vote_2. update_vote_properties()
@@ -174,7 +175,7 @@ I have a deadline''')
         self.assertEqual(res.context['object'].description, self.agenda_1.description)
         self.assertEqual(res.context['object'].public_owner_name, self.agenda_1.public_owner_name)
         self.assertEqual(list(res.context['object'].editors.all()), [self.user_1])
-        self.assertEqual(len(res.context['all_mks_ids']), 3)
+        self.assertEqual(len(res.context['all_mks_ids']), 4)
 
     def testAgendaUnauthorized(self):
         # Access non-public agenda without authorization
@@ -352,19 +353,41 @@ I have a deadline''')
         self.assertEqual(int(res.context['score']), -33)
         self.assertEqual(len(res.context['related_votes']), 2)
 
-    def testAgendaMkDetailForKnesset19NotInRange(self):
-	res = self.client.get('/api/v2/agenda/%s/?ranges=201205-201208&format=json' % self.agenda_1.id)
+    def testAgendaMkDetailForKnesset19Range(self):
+	res = self.client.get('/api/v2/agenda/%s/?ranges=201301-201408&format=json' % self.agenda_1.id)
 
         self.assertEqual(res.status_code, 200)
         todo = json.loads(res.content)
 
-        def _validate_members_list(mn):
+        def _validate_mk_name_exist(member_name):
+            members = todo["members"]
+            mk_name_exist = False
+            for m in members:
+                print m["name"]
+                #if exist one time the test should pass
+                if  m["name"] == member_name:
+                    mk_name_exist = True
+            self.assertTrue(mk_name_exist)
+
+ 	def _validate_mk_name_not_exist(member_name):
             members = todo["members"]
             for m in members:
-                self.assertNotContains(m, mn)
+                print m["name"]
+                self.assertNotEqual(m["name"], member_name)
+    # mk_1 is an old mk which left to other job
+    #mk_1 start_date=datetime.date(2010,1,1),end_date=datetime.date(2012,1,1),
+    #mk_2 start_date=datetime.date(2013,1,1),
+	#mk_from_knesset_19 startstart_date=datetime.date(2013,1,1),
+    #mk_where_6_weeks_in_knesset_19 start_date=datetime.date(2013,1,1),end_date=datetime.date(2013,2,16),
 
-        _validate_members_list("852")
-	
+	_validate_mk_name_exist("mk_2")
+
+        _validate_mk_name_exist("mk_from_knesset_19")
+
+        _validate_mk_name_exist("mk_where_6_weeks_in_knesset_19")
+
+        _validate_mk_name_not_exist("mk_1")
+
 
     def testAgendaDetailOptCacheFail(self):
         res = self.client.get(reverse('agenda-detail',
