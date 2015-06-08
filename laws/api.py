@@ -2,7 +2,6 @@
 API for the laws app
 '''
 import logging
-
 from django.core.urlresolvers import reverse
 from tastypie.constants import ALL
 import tastypie.fields as fields
@@ -19,6 +18,7 @@ from models import Law, Bill, Vote, VoteAction, PrivateProposal
 from simple.management.commands.syncdata_globals import p_explanation
 from agendas.models import AgendaVote
 
+from datetime import datetime, timedelta
 logger = logging.getLogger("open-knesset.laws.api")
 
 class LawResource(BaseResource):
@@ -32,12 +32,22 @@ class VoteActionResource(BaseResource):
         allowed_methods = ['get']
         excludes = ['type','id']
         include_resource_uri = False
+        filtering = {
+            'against_own_bill': ALL,
+        }
+        list_fields = [
+            'member', 'party', 'vote', 'against_party', 'against_coalition', 'against_opposition', 'against_own_bill', 'member_title', 'vote_title', 'member_url', 'vote_url', 'vote_time'
+        ]
 
     vote_type = fields.CharField('type',null=True)
-    member = fields.ToOneField(MemberResource,
-                              'member',
-                              full=False)
-
+    member = fields.ToOneField(MemberResource, 'member', full=False)
+    party = fields.ToOneField('mks.api.PartyResource', 'party', full=False)
+    vote = fields.ToOneField('laws.api.VoteResource', 'vote', full=False)
+    member_title = fields.CharField('member')
+    vote_title = fields.CharField('vote')
+    member_url = fields.CharField('member__get_absolute_url')
+    vote_url = fields.CharField('vote__get_absolute_url')
+    vote_time = fields.DateTimeField('vote__time')
 
 class VoteResource(BaseResource):
 
@@ -50,9 +60,12 @@ class VoteResource(BaseResource):
             'importance', 'controversy', 'against_party ', 'against_coalition',
             'against_opposition', 'against_own_bill',
         ]
-        filtering = dict(member=ALL,
+        filtering = dict(tag=('exact'),
+                         member=ALL,
                          member_for=ALL,
-                         member_against=ALL)
+                         member_against=ALL,
+                         from_date=ALL,
+                         to_date=ALL)
 
     votes = fields.ToManyField(VoteActionResource,
                     attribute=lambda bundle:VoteAction.objects.filter(
@@ -60,6 +73,10 @@ class VoteResource(BaseResource):
                     null=True,
                     full=True)
     agendas = fields.ListField()
+    tags = fields.ToManyField('auxiliary.api.TagResource',
+                              attribute=lambda t: t.obj.tags,
+                              null=True,
+                              full=False)
 
     def build_filters(self, filters={}):
         orm_filters = super(VoteResource, self).build_filters(filters)
@@ -71,7 +88,18 @@ class VoteResource(BaseResource):
         if 'member_against' in filters:
             orm_filters["voteaction__member"] = filters['member_against']
             orm_filters["voteaction__type"] = 'against'
-
+        if 'tag' in filters:
+            # hard-coded the __in filter. not great, but works.
+            orm_filters["tagged_items__tag__in"] = \
+                filters["tag"].split(',')
+        if 'from_date' in filters:
+            orm_filters["time__gte"] = filters['from_date']
+        if 'to_date' in filters:
+            # the to_date needs to be incremented by a day since when humans say to_date=2014-07-30 they
+            # actually mean midnight between 30 to 31. python on the other hand interperts this as midnight between
+            # 29 and 30
+            to_date = datetime.strptime(filters["to_date"], "%Y-%M-%d")+timedelta(days=1)
+            orm_filters["time__lte"] = to_date.strftime("%Y-%M-%d")
         return orm_filters
 
     def dehydrate_agendas(self, bundle):
@@ -144,6 +172,10 @@ class BillResource(BaseResource):
                                    'proposals',
                                    null=True,
                                    full=True)
+    tags = fields.ToManyField('auxiliary.api.TagResource',
+                              attribute=lambda t: t.obj.tags,
+                              null=True,
+                              full=False)
 
 
     def dehydrate_explanation(self, bundle):

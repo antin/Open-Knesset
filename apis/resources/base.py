@@ -1,12 +1,13 @@
 import csv
 
 from django.conf import settings
-from django.core.serializers import json
 from django.http import HttpResponse
 from tastypie.cache import SimpleCache
-from tastypie.resources import ModelResource
+from tastypie.resources import ModelResource, Resource
 from tastypie.throttle import CacheThrottle
 from tastypie.serializers import Serializer
+
+import ujson
 
 # are we using DummyCache ?
 _cache = getattr(settings, 'CACHES', {})
@@ -38,7 +39,8 @@ class IterJSONAndCSVSerializer(Serializer):
         options = options or {}
 
         data = self.to_simple(data, options)
-        return ''.join(json.DjangoJSONEncoder(sort_keys=True).iterencode(data))
+        return ujson.dumps(data)
+        # return ''.join(json.DjangoJSONEncoder(sort_keys=True).iterencode(data))
 
     def to_csv(self, data, options=None):
         options = options or {}
@@ -64,6 +66,17 @@ class IterJSONAndCSVSerializer(Serializer):
         return response
 
 
+class BaseNonModelResource(Resource):
+
+    """Base resource for implementing Non model base api calls"""
+
+    class Meta:
+        cache = SimpleCache()
+        throttle = SmartCacheThrottle(throttle_at=60, timeframe=60)
+        serializer = IterJSONAndCSVSerializer(
+            formats=['json', 'jsonp', 'csv'])
+
+
 class BaseResource(ModelResource):
 
     """Adds to Meta the following options:
@@ -77,11 +90,8 @@ class BaseResource(ModelResource):
         GET /api/v2/some_resource/?extra_fields=img_url,number_of_children
     """
 
-    class Meta:
-        cache = SimpleCache()
-        throttle = SmartCacheThrottle(throttle_at=60, timeframe=60)
-        serializer = IterJSONAndCSVSerializer(
-            formats=['json', 'jsonp', 'csv'])
+    class Meta(BaseNonModelResource.Meta):
+        pass
 
     def _get_list_fields(self, request):
         """Helper to return list and extra fields for list mode.

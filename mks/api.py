@@ -2,24 +2,30 @@
 Api for the members app
 '''
 import urllib
+import math
+import logging
 from django.core.urlresolvers import reverse
 from django.core.cache import cache
+from django.db.models.query import EmptyQuerySet
 from tastypie.constants import ALL
 from tastypie.bundle import Bundle
 import tastypie.fields as fields
 
 from tagging.models import Tag
 from tagging.utils import calculate_cloud
-from apis.resources.base import BaseResource
+from apis.resources.base import BaseResource, BaseNonModelResource
 from models import Member, Party, Knesset
 from agendas.models import Agenda
 from video.utils import get_videos_queryset
 from video.api import VideoResource
 from links.models import Link
 from links.api import LinkResource
+from persons.api import RoleResource
+from persons.models import Person, PersonAlias
 
 from django.db.models import Count
 
+logger = logging.getLogger(__name__)
 
 class PartyResource(BaseResource):
     ''' Party API
@@ -44,16 +50,18 @@ class PartyResource(BaseResource):
             return super(PartyResource, self).get_object_list(request).filter(
             knesset=Knesset.objects.current_knesset())
 
+
 class DictStruct:
     def __init__(self, **entries):
             self.__dict__.update(entries)
 
-class MemberBillsResource(BaseResource):
 
-    class Meta(BaseResource.Meta):
+class MemberBillsResource(BaseNonModelResource):
+
+    class Meta(BaseNonModelResource.Meta):
         allowed_methods = ['get']
         resource_name = "member-bills"
-        # object_class= DictStruct
+        object_class = DictStruct
 
     id = fields.IntegerField(attribute='id')
     bills = fields.ListField(attribute='bills')
@@ -125,7 +133,11 @@ class MemberAgendasResource(BaseResource):
 
         if not agendas:
             agendas_values = mk.get_agendas_values()
-            friends = mk.current_party.current_members().values_list('id', flat=True).order_by()
+            if mk.current_party:
+                friends = (mk.current_party.current_members()
+                           .values_list('id', flat=True))
+            else:
+                friends = [] 
             agendas = []
             for a in Agenda.objects.filter(pk__in = agendas_values.keys(),
                     is_public = True):
@@ -206,9 +218,33 @@ class MemberResource(BaseResource):
     bills_uri = fields.CharField()
     agendas_uri = fields.CharField()
     committees = fields.ListField()
+    detailed_roles = fields.ToManyField(RoleResource,
+            attribute = lambda b: Person.objects.get(mk=b.obj).roles.all(),
+            full = True,
+            null = True)
+    fields.ToOneField(PartyResource, 'current_party', full=True)
+    average_weekly_presence_rank = fields.IntegerField()
+
+    def obj_get_list(self, bundle, **kwargs):
+        simple = super(MemberResource, self).obj_get_list(bundle, **kwargs)
+
+        if hasattr(bundle.request, 'GET'):
+            # Grab a mutable copy.
+            filters = bundle.request.GET.copy()
+
+        # Update with the provided kwargs.
+        filters.update(kwargs)
+        name = filters.get('name')
+        if name and not simple:
+            try:
+                return Member.objects.filter(person__aliases__name=name)
+            except PersonAlias.DoesNotExist:
+                return simple
+        return simple
 
     def dehydrate_committees (self, bundle):
-        temp_list = bundle.obj.committee_meetings.values("committee", "committee__name").annotate(Count("id")).order_by('-id__count')[:5]
+        temp_list = bundle.obj.committee_meetings.exclude(committee__type='plenum')
+        temp_list = temp_list.values("committee", "committee__name").annotate(Count("id")).order_by('-id__count')[:5]
         return (map(lambda item: (item['committee__name'], reverse('committee-detail', args=[item['committee']])), temp_list))
 
     def dehydrate_bills_uri(self, bundle):
@@ -223,10 +259,12 @@ class MemberResource(BaseResource):
                                                     'api_name': 'v2',
                                                     'pk' : bundle.obj.id})
     def dehydrate_party_name(self, bundle):
-        return bundle.obj.current_party.name
+        party = bundle.obj.current_party
+        return party.name if party else None
 
     def dehydrate_party_url(self, bundle):
-        return bundle.obj.current_party.get_absolute_url()
+        party = bundle.obj.current_party
+        return party.get_absolute_url() if party else None
 
     def dehydrate_mmms_count(self, bundle):
         _cache_key = 'api_v2_member_mmms_' + str(bundle.obj.pk)
@@ -248,7 +286,32 @@ class MemberResource(BaseResource):
 
         return count
 
-    fields.ToOneField(PartyResource, 'current_party', full=True)
+    def dehydrate_average_weekly_presence_rank (self, bundle):
+        ''' Calculate the distribution of presence and place the user on a 5 level scale '''
+        SCALE = 5
+        member = bundle.obj
+
+        rel_location = cache.get('average_presence_location_%d' % member.id)
+        if not rel_location:
+
+            presence_list = sorted(map(lambda member: member.average_weekly_presence_hours,
+                                       Member.objects.all()))
+            presence_groups = int(math.ceil(len(presence_list) / float(SCALE)))
+
+            # Generate cache for all members
+            for mk in Member.objects.all():
+                avg = mk.average_weekly_presence_hours
+                if avg:
+                    mk_location = 1 + (presence_list.index(avg) / presence_groups)
+                else:
+                    mk_location = 0
+
+                cache.set('average_presence_location_%d' % mk.id, mk_location, 60*60*24)
+
+                if mk.id == member.id:
+                    rel_location = mk_location
+
+        return rel_location
 
     def build_filters(self, filters=None):
         if filters is None:

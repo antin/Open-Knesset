@@ -12,8 +12,10 @@ is Python_ and Django_ based.
 .. note::
     This guide is for developers working on Open Knesset's code.
 
-    For 3rd party applications and services developers, please see the API
-    documentation.
+    For 3rd party applications and services developers, please see the 
+    `API documentation`_.
+
+.. _API documentation: http://oknesset-api.readthedocs.org/
 
     Some useful project links:
 
@@ -29,16 +31,11 @@ is Python_ and Django_ based.
     `Open Knesset Developers group`_.
 
 
-.. todo::
-
-    Link to the API docs once on ReadTheDocs
-
-
 .. _Python: http://www.python.org/
 .. _Django: https://www.djangoproject.com/
 .. _Open Knesset Developers group: https://groups.google.com/forum/#!forum/oknesset-dev
 .. _Our code repository: https://github.com/hasadna/Open-Knesset/
-.. _The issue tracker: https://github.com/hasadna/Open-Knesset/issues/
+.. _The issue tracker: https://huboard.com/hasadna/Open-Knesset
 .. _Open Knesset: http://oknesset.org/
 .. _Hasadna: http://www.hasadna.org.il/
 
@@ -53,6 +50,7 @@ Contents:
     workflow
     css_docs
     tips
+    browsertests
 
 Indices and tables
 ==================

@@ -2,16 +2,17 @@ from django.views.generic import ListView, DetailView, TemplateView
 from models import *
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.cache import cache
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpResponseRedirect, Http404
 import json
 import sys
+from links.models import Link
 
 
 class LobbyistsIndexView(ListView):
 
     def get_queryset(self):
         return LobbyistHistory.objects.latest().lobbyists.select_related('person').order_by('person__name')
-        
+
     def get_context_data(self, **kwargs):
         context = super(LobbyistsIndexView, self).get_context_data(**kwargs)
         corporations = LobbyistCorporation.objects.current_corporations().order_by('name')
@@ -73,12 +74,17 @@ class LobbyistDetailView(DetailView):
 
     model = Lobbyist
 
+    queryset = Lobbyist.objects.all()\
+        .prefetch_related('committee_meetings')\
+        .prefetch_related('committee_meetings__committee')
+
     def get_context_data(self, **kwargs):
         context = super(LobbyistDetailView, self).get_context_data(**kwargs)
         lobbyist = context['object']
         context['represents'] = lobbyist.latest_data.represents.all()
         context['corporation'] = lobbyist.latest_corporation
         context['data'] = lobbyist.latest_data
+        context['links'] = Link.objects.for_model(context['object'])
         return context
 
 
@@ -86,12 +92,20 @@ class LobbyistCorporationDetailView(DetailView):
 
     model = LobbyistCorporation
 
+    def get(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        if self.object.main_corporation == self.object:
+            context = self.get_context_data(object=self.object)
+            return self.render_to_response(context)
+        else:
+            return HttpResponseRedirect(self.object.main_corporation.get_absolute_url())
+
     def get_context_data(self, **kwargs):
         context = super(LobbyistCorporationDetailView, self).get_context_data(**kwargs)
         context['lobbyists'] = Lobbyist.objects.filter(id__in=context['object'].cached_data['combined_lobbyist_ids']).order_by('person__name')
         if context['object'] not in LobbyistCorporation.objects.current_corporations():
             context['warning_old_corporation'] = True
-
+        context['links'] = Link.objects.for_model(context['object'])
         return context
 
 
@@ -117,3 +131,19 @@ def LobbyistCorporationMarkAliasView(request, alias, main):
         res['ok'] = False
         res['msg'] = unicode(sys.exc_info()[1])
     return HttpResponse(json.dumps(res), content_type="application/json")
+
+
+def lobbyists_auto_complete(request):
+    if request.method != 'GET':
+        raise Http404
+
+    if not 'query' in request.GET:
+        raise Http404
+
+    suggestions = map(lambda lob: lob.person.name,
+                      Lobbyist.objects.filter(
+                          person__name__icontains=request.GET['query'])[:30])
+
+    result = { 'query': request.GET['query'], 'suggestions':suggestions }
+
+    return HttpResponse(json.dumps(result), mimetype='application/json')

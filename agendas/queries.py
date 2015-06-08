@@ -1,8 +1,7 @@
 from django.db import connection, transaction
 from itertools import groupby
 from operator import itemgetter
-from datetime import datetime, timedelta
-#,datetime(g[4]),datetime(g[5])
+
 def getAllAgendaPartyVotes():
     cursor = connection.cursor()
     cursor.execute(PARTY_QUERY)
@@ -13,13 +12,12 @@ def getAllAgendaPartyVotes():
 PARTY_QUERY = """
 SELECT a.agendaid,
        a.partyid,
-       round(coalesce(cast(coalesce(v.totalvotevalue,0.0)/a.totalscore*100.0 as numeric),0.0),2) score,
-       round(coalesce(cast(coalesce(v.numvotes,0.0)/a.totalvolume*100.0 as numeric),0.0),2) volume,
-       a.start_date, a.end_date
+       round(coalesce(cast(coalesce(v.totalvotevalue,0.0)/(case when a.totalscore = 0 then 1 else a.totalscore end)*100.0 as numeric),0.0),2) score,
+       round(coalesce(cast(coalesce(v.numvotes,0.0)/a.totalvolume*100.0 as numeric),0.0),2) volume
 FROM   (SELECT agid                   agendaid,
                m.id                   partyid,
                sc * m.number_of_seats totalscore,
-               numvotes * m.number_of_seats totalvolume, m.start_date, m.end_date
+               numvotes * m.number_of_seats totalvolume
         FROM   (SELECT agenda_id               agid,
                        SUM(abs(score * importance)) sc,
                        COUNT(*) numvotes
@@ -75,10 +73,10 @@ def agendas_mks_grade():
 MK_QUERY = """
 SELECT a.agendaid, 
        v.memberid, 
-       Round(Coalesce(CAST(Coalesce(v.totalvotevalue, 0.0) / a.totalscore * 100.0 AS 
+       Round(Coalesce(CAST(Coalesce(v.totalvotevalue, 0.0) / (case when a.totalscore = 0 then 1 else a.totalscore end) * 100.0 AS 
                   NUMERIC),0.0), 2 
        ) score,
-       Round(Coalesce(CAST(Coalesce(v.numvotes,0.0) / a.numvotes * 100.0 AS
+       Round(Coalesce(CAST(Coalesce(v.numvotes,0.0) / (case when a.numvotes = 0 then 1 else a.numvotes end) * 100.0 AS
                   NUMERIC),0.0), 2
        ) volume,
        CAST(Coalesce(v.numvotes,0) AS NUMERIC) numvotes 
@@ -203,3 +201,61 @@ GROUP BY agenda_id,
          memberid,
          %(monthfunc)s,time)
 """
+
+BASE_PARTY_QUERY = """
+INSERT INTO agendas_summaryagenda (summary_type,agenda_id,party_id,month,score,votes,for_votes,against_votes,db_created,db_updated)
+SELECT 'PR' as summary_type,
+       agenda_id,
+       partyid,
+       %(monthfunc)s,time) as month,
+       SUM(forvotes) - SUM(againstvotes) totalvotevalue,
+       SUM(numvotes) numvotes,
+       SUM(numforvotes) numforvotes,
+       SUM(numagainstvotes) numagainstvotes,
+       %(nowfunc)s,%(nowfunc)s
+FROM
+  (SELECT a.agenda_id,
+          p.partyid,
+          a.time,
+          a.vote_id,
+          CASE p.vtype
+              WHEN 'for' THEN a.VALUE*p.numoccurences
+              ELSE 0
+          END forvotes,
+          CASE p.vtype
+              WHEN 'against' THEN a.VALUE*p.numoccurences
+              ELSE 0
+          END againstvotes,
+          p.numoccurences as numvotes,
+          CASE p.vtype
+              WHEN 'for' THEN p.numoccurences
+              ELSE 0
+          END numforvotes,
+          CASE p.vtype
+            WHEN 'against' THEN p.numoccurences
+              ELSE 0
+          END numagainstvotes          
+    FROM
+     (SELECT v.party_id partyid,
+             v.vote_id voteid,
+             v.TYPE vtype,
+             count(*) numoccurences
+      FROM laws_voteaction v
+      WHERE v.TYPE IN ('for',
+                       'against')
+       GROUP BY v.party_id,
+               v.vote_id,
+               v.TYPE) p
+   INNER JOIN
+     (SELECT a.vote_id,
+             a.agenda_id,
+             a.score * a.importance AS VALUE,
+             v.time as time
+      FROM agendas_agendavote a
+      JOIN laws_vote v ON a.vote_id = v.id) a ON p.voteid = a.vote_id
+      ) b
+GROUP BY agenda_id,
+         partyid,
+         %(monthfunc)s,time)
+"""
+

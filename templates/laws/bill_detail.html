@@ -7,7 +7,6 @@
 {% block extrajs %}
     <script type="text/javascript" src="{% static "js/jquery.autocomplete.js" %}"></script>
     <script type="text/javascript" src="{% static "js/ok-watch.js" %}?v=1"></script>
-    <script type="text/javascript" src="{% static "js/raphael-min.js" %}"></script>
     {% include "auxiliary/tags_object_edit_extrajs.html" with app_label="laws" object_type="bill" object_id=object.id %}
     <script type="text/javascript">
         function show_only_vote_stage_div( div ) {
@@ -23,100 +22,14 @@
             } );
         }
 
-        Raphael.fn.my_arrow = function ( x,y,div,active ) {
-            var paper = this;
-            var realx = 850 - x;
-            var path_params;
-            if ( active ) {
-                path_params = {"stroke":"#777", "fill":"90-#ccf-#aaf"};
-            } else {
-                path_params = {"stroke":"#999", "fill":"#ccc", "fill-opacity":0.5};
-            }
-            var l = paper.path(["M",realx,y,"h",-120,"v",60,"h",120,"v",-60,"Z"]).attr(path_params);
 
-
-            function add_animation(el,l) {
-                el.hover(function () {
-                    l.attr({"stroke-width": "2px",
-                            "stroke":"#224",
-                            "scale": [1.1,1.1]});
-                    return true;
-                },
-                function () {
-                    l.attr({"stroke-width": "1px",
-                            "stroke":"#777",
-                            "scale": [1,1]});
-                    return true;
-                });
-            }
-            l.toBack();
-            $(l.node).css("cursor","pointer");
-            add_animation(l,l);
-            connect_el_to_div(l,div);
-            return l;
-        };
-
-        Raphael.fn.my_box = function ( x,y,div,active ) {
-            var paper = this;
-            var realx = 850 - x;
-            var path_params;
-            if ( active ) {
-                 path_params = {"stroke":"#777", "fill":"90-#ccf-#aaf"};
-            } else {
-                 path_params = {"stroke":"#999", "fill":"#ccc", "fill-opacity":0.5};
-            }
-            // var l = paper.path(["M",realx,y,"h",-500,"l",-7,15,"l",7,15,"h",500,"l",7,-15,"Z"]).attr(path_params);
-            var l = paper.path(["M",realx,y,"h",-500,"v",30,"h",500,"v",-30,"Z"]).attr(path_params);
-
-
-            function add_animation(el,l) {
-                el.hover(function () {
-                    l.attr({"stroke-width": "2px",
-                            "stroke":"#224",
-                            "scale": [1.01,1.1]});
-                    return true;
-                },
-                function () {
-                    l.attr({"stroke-width": "1px",
-                            "stroke":"#777",
-                            "scale": [1,1]});
-                    return true;
-                });
-            }
-            l.toBack();
-            $(l.node).css("cursor","pointer");
-            add_animation(l,l);
-            connect_el_to_div(l,div);
-            return l;
-        };
-
-        Raphael.fn.approved = function ( _x,y,approved ) {
-            var paper = this;
-            var s=paper.set(),
-                im,
-                x = 850-_x,
-                circle_radius = 15,
-                circle_x = x + circle_radius,
-                circle_y = y + circle_radius,
-                c = paper.circle(circle_x,circle_y,circle_radius);
-            if ( approved == null ) {
-                im = paper.image("{% static "img/unknown.png" %}",x,y,30,30);
-            } else if ( approved ) {
-                c.attr({"fill":"fff","fill-opacity":0.8, "stroke-width":"2px","stroke":"#4c4"});
-                im = paper.image("{% static "img/ok.png" %}",x,y,30,30);
-            } else {
-                c.attr({"fill":"fff","fill-opacity":0.8, "stroke-width":"2px","stroke":"#c44"});
-                im = paper.image("{% static "img/stop.png" %}",x,y,30,30);
-            }
-            s.push(c,im);
-            return s;
-        }
         $(document).ready(function() {
 
                 var options = {
                      serviceUrl:'/vote/auto_complete/',
                      minChars:2,
                      maxHeight:400,
+                     width:300,
                      deferRequestBy: 100, //miliseconds
                      onSelect: function(value, data, me){
                         me.siblings("input[name$='vote_id']").val(data);
@@ -131,6 +44,26 @@
                      $(this).autocomplete(options);
 
                 });
+                var options_kp = {
+                     serviceUrl:'/bill/auto_complete_knesset_proposal/',
+                     minChars:2,
+                     maxHeight:400,
+                     width:300,
+                     deferRequestBy: 100, //miliseconds
+                     onSelect: function(value, data, me){
+                        me.siblings("input[name$='kp_id']").val(data);
+                        me.siblings("input[type$='submit']").removeAttr('disabled');
+                     }
+                 };
+                $('.kp_input').each(function(item) {
+                     $(this).keydown(function() {
+                        $(this).siblings("input[name$='kp_id']").val('');
+                        $(this).siblings("input[type$='submit']").attr('disabled', 'disabled');
+                     });
+                     $(this).autocomplete(options_kp);
+
+                });
+
                 if (location.hash) {
                   // Can be '#' + one of the "bill-stage" class divs.
                     $(location.hash).get(0).scrollIntoView();
@@ -186,9 +119,9 @@
         <div class="modal-body">
             בדיוק כמו שסרטוני יוטוב יכולים להיות מוטמעים באתרים אחרים, גם תהליך החקיקה הזה יכול להופיע בבלוגים, כתבות, פייסבוק וכן הלאה...<br>
             <b>העתיקו את קוד ההטמעה (html):</b><br>
-            <input type="text" readonly="readonly" value='<iframe frameborder="0" id="embed-widget" src="http://oknesset.org/bill/{{object.id}}/embed/" style="width: 505px; height: 375px;"></iframe>'></br>
+            <input type="text" readonly="readonly" value='<iframe frameborder="0" id="embed-widget" src="https://oknesset.org/bill/{{object.id}}/embed/" style="width: 505px; height: 375px;"></iframe>'></br>
             <b>העתיקו את הלינק (להטמעה בפייסבוק):</b><br>
-            <input type="text" readonly="readonly" value='http://oknesset.org/bill/{{object.id}}'/>
+            <input type="text" readonly="readonly" value='https://oknesset.org/bill/{{object.id}}'/>
         </div>
         <div class="modal-footer">
             <button class="btn" data-dismiss="modal" aria-hidden="true">{% trans "Close" %}</button>
@@ -338,6 +271,20 @@ var pre_vote_score = {{ v.for_votes_count}} - {{ v.against_votes_count }};
                         <a href="{{ object.knesset_proposal.source_url }}">{% trans 'Bill on knesset website' %}</a>
                     </li>
                 </ul>
+                {% else %}
+                    {% if user.is_authenticated %}
+                    <ul class="dates-list">
+                        <li>
+                            {% trans 'Suggest a Knesset Proposal' %}
+                            <form method="post" action="." class="form-inline">{% csrf_token %}
+                                <input type="hidden" name="user_input_type" value="knesset_proposal"></input>
+                                <input type="text" class="kp_input" name="kp_string" placeholder="{% trans 'Start typing a bill title and choose one from the list' %}" autocomplete="off"></input>
+                                <input type="hidden" name="kp_id"></input>
+                                <input type="submit" disabled value="{% trans 'Submit' %}" class="btn" autocomplete="off"></input>
+                            </form>
+                        </li>
+                    </ul>
+                  {% endif %}
                 {% endif %}
             </section>
 

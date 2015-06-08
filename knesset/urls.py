@@ -23,12 +23,13 @@ from mks.views import get_mk_entry, mk_is_backlinkable
 from laws.models import Bill
 from polyorg.urls import polyorgurlpatterns
 from lobbyists.urls import lobbyistpatterns
+from auxiliary.urls import auxiliarysurlpatterns
 
 from auxiliary.views import (
     main, post_annotation, post_details, post_feedback,
     RobotsView, AboutView, CommentsView, add_tag_to_object,
     remove_tag_from_object, create_tag_and_add_to_item, help_page,
-    TagList, TagDetail, suggest_tag_post, untagged_objects)
+    TagList, TagDetail, suggest_tag_post, untagged_objects, add_tag_synonym)
 
 admin.autodiscover()
 
@@ -47,8 +48,7 @@ urlpatterns = patterns('',
     (r'^api/', include('apis.urls')),
     (r'^agenda/', include('agendas.urls')),
     (r'^users/', include('user.urls')),
-    (r'^badges/', include('badges.urls')),
-    url(r'', include('social_auth.urls')),
+    url('', include('social.apps.django_app.urls', namespace='social')),
     url(r'^help/$', help_page, name="help"),
     (r'^admin/', include(admin.site.urls)),
     (r'^comments/$', CommentsView.as_view()),
@@ -85,6 +85,7 @@ urlpatterns = patterns('',
     # disabled for now, because we don't want users to add more tags.
     # will be added back in the future, but for editors only.
     #url(r'^tags/(?P<app>\w+)/(?P<object_type>\w+)/(?P<object_id>\d+)/create-tag/$', create_tag_and_add_to_item, name='create-tag'),
+    url(r'^add_tag_synonym/(?P<parent_tag_id>\d+)/(?P<synonym_tag_id>\d+)/$', add_tag_synonym),
     url(r'^tags/$', TagList.as_view(), name='tags-list'),
     url(r'^tags/(?P<slug>.*)/$', TagDetail.as_view(), name='tag-detail'),
     url(r'^suggest-tag-post/$', suggest_tag_post, name='suggest-tag-post'),
@@ -110,3 +111,11 @@ urlpatterns += staticfiles_urlpatterns() + static(settings.MEDIA_URL, document_r
 # seems broken, specially when trying to cache querysets
 # urlpatterns += polyorgurlpatterns + personsurlpatterns
 urlpatterns += personsurlpatterns
+urlpatterns += auxiliarysurlpatterns
+if settings.DEBUG:
+    import debug_toolbar
+    urlpatterns += patterns('',
+        url(r'^__debug__/', include(debug_toolbar.urls)),
+    )
+
+

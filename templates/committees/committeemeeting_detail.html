@@ -60,7 +60,7 @@
             <div class="span6 social-details">
                 <div class="spacer fill">
                     <h2>{% trans "MKs attended" %}</h2>
-                    {% include "committees/committee_member_photos.html" with members=members chairpersons=object.committee.chairpersons.all replacements=object.committee.replacements.all%}
+                    {% include "committees/committee_member_photos.html" with members=members chairpersons=object.committee.chairpersons.all replacements=object.committee.replacements.all extra_class="committee-members"%}
 
                     {% if perms.committees.change_committeemeeting %}
                     <form method="post" action="." class="form-inline">{% csrf_token %}
@@ -73,6 +73,18 @@
                         <input type="hidden" name="user_input_type" value="remove-mk">
                         <label for="id_mk_name">{% trans "Remove an MK" %}</label>
                         <input type="text" name="mk_name" id="id_mk_name">
+                        <input type="submit" value="{% trans "Submit" %}" class="btn">
+                    </form>
+                    <form method="post" action="." class="form-inline">{% csrf_token %}
+                        <input type="hidden" name="user_input_type" value="add-lobbyist">
+                        <label for="id_lobbyist_name">{% trans "Add a lobbyist" %}</label>
+                        <input type="text" name="lobbyist_name" id="id_lobbyist_name">
+                        <input type="submit" value="{% trans "Submit" %}" class="btn">
+                    </form>
+                    <form method="post" action="." class="form-inline">{% csrf_token %}
+                        <input type="hidden" name="user_input_type" value="remove-lobbyist">
+                        <label for="id_lobbyist_name">{% trans "remove a lobbyist" %}</label>
+                        <input type="text" name="lobbyist_name" id="id_lobbyist_name">
                         <input type="submit" value="{% trans "Submit" %}" class="btn">
                     </form>
                     {% endif %}
@@ -134,10 +146,37 @@
                 {% include "auxiliary/tags_object_edit.html" with tags=object.tags tag_suggestions=tag_suggestions %}
             </aside>
 
+            {% if mentioned_lobbyists or mentioned_lobbyist_corporations %}
+            <aside class="sidebar sidebar-lobbyists">
+                {% if mentioned_lobbyists %}
+                <header><h2>{% trans "Lobbyists mentioned" %}</h2></header>
+                <ul>
+                    {% for lobbyist in mentioned_lobbyists %}
+                        <li>
+                            <a href="{% url 'lobbyist-detail' lobbyist.id %}">{{ lobbyist }}</a>
+                        </li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+                {% if mentioned_lobbyist_corporations %}
+                <header><h2>{% trans "Lobbyist corporations mentioned" %}</h2></header>
+                <ul>
+                    {% for corporation in mentioned_lobbyist_corporations %}
+                        <li>
+                            <a href="{% url 'lobbyist-corporation' corporation.id %}">{{ corporation }}</a>
+                        </li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+            </aside>
+
             <aside class="sidebar">
                 {% agendas_for user object 'committeemeeting' %}
             </aside>
+
+            {% endif %}
         </div>
+
     </div>
 
 {% endblock %}

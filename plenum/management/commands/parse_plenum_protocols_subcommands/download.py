@@ -25,13 +25,16 @@ def _get_committees_index_page(full):
         encoding='iso_8859_8'
     else:
         url=URL
-        encoding='utf8'
+        # encoding='utf8'
+        # the encoding of this page used to be utf-8 but looks like they reverted back to iso-8859-8
+        encoding='iso_8859_8'
     _debug('getting the html from '+url)
     try:
         return unicode(urllib2.urlopen(url).read(),encoding)
     except Exception, e:
         print 'could not fetch committees_index_page, exception: '+str(e)
         traceback.print_exc(file=sys.stdout)
+        return ''
 
 def _copy(url,to):
     #_debug("copying from "+url+" to "+to)
@@ -88,7 +91,11 @@ def _downloadLatest(full,redownload):
     aelts=soup('a',text=words_of_the_knesset)
     for aelt in aelts:
         selt=aelt.findPrevious('span',text=re.compile(DISCUSSIONS_ON_DATE))
-        url=FILE_BASE_URL+aelt.parent.get('href')
+        href = aelt.parent.get('href')
+        if href.startswith('http'):
+            url = href
+        else:
+            url=FILE_BASE_URL+href
         filename=re.search(r"[^/]*$",url).group()
         _debug(filename)
         m=re.search(r"\((.*)/(.*)/(.*)\)",selt)
@@ -116,4 +123,12 @@ def Download(verbosity_level,redownload):
     verbosity=int(verbosity_level)
     _downloadLatest(False,redownload)
     _downloadLatest(True,redownload)
+
+def download_for_existing_meeting(meeting):
+    DATA_ROOT = getattr(settings, 'DATA_ROOT')
+    _copy(meeting.src_url, DATA_ROOT+'plenum_protocols/tmp')
+    xmlData = _antiword(DATA_ROOT+'plenum_protocols/tmp')
+    os.remove(DATA_ROOT+'plenum_protocols/tmp')
+    meeting.protocol_text=xmlData
+    meeting.save()
 

@@ -1,5 +1,6 @@
 #encoding: utf-8
 import datetime
+import json
 import os
 
 import difflib
@@ -9,27 +10,26 @@ import voting
 from actstream import action
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ObjectDoesNotExist
-from django.core.files.storage import default_storage
 from django.core.urlresolvers import reverse
 from django.http import (HttpResponseRedirect, HttpResponse, Http404,
-                         HttpResponseBadRequest)
+                         HttpResponseBadRequest, HttpResponseForbidden)
+from django.views.decorators.http import require_http_methods
 from django.shortcuts import render_to_response, get_object_or_404
 from django.template import RequestContext
-from django.utils import simplejson as json
 from django.utils.decorators import method_decorator
 from django.utils.translation import ugettext_lazy, ugettext as _
 from django.views.decorators.csrf import ensure_csrf_cookie
-from django.views.generic import ListView
+from django.db.models import Q
 from tagging.models import Tag, TaggedItem
-from tagging.utils import get_tag
 
 from agendas.models import Agenda, UserSuggestedVote
 from auxiliary.views import CsvView, BaseTagMemberListView
 from forms import VoteSelectForm, BillSelectForm, BudgetEstimateForm
+from forms import AttachBillFromVoteForm
 from hashnav import DetailView, ListView as HashnavListView
 from knesset.utils import notify_responsible_adult
 from mks.models import Member
-from models import Bill, BillBudgetEstimation, Vote
+from models import Bill, BillBudgetEstimation, Vote, KnessetProposal
 from models import BILL_STAGE_CHOICES
 
 
@@ -144,21 +144,23 @@ class BillTagsView(BaseTagMemberListView):
 #    #return tagged_object_list(request, queryset_or_model=qs, tag=tag,
 #        template_name='laws/bill_list_by_tag.html', extra_context=extra_context)
 
-def bill_auto_complete(request):
-    if request.method != 'GET':
-        raise Http404
 
+@require_http_methods(["GET"])
+def bill_auto_complete(request):
     if not 'query' in request.GET:
         raise Http404
 
-    options = Bill.objects.filter(full_title__icontains=request.GET['query'])[:30]
+    options = Bill.objects.filter(
+        full_title__icontains=request.GET['query'])[:30]
     data = []
     suggestions = []
     for i in options:
         data.append(i.id)
         suggestions.append(i.full_title)
 
-    result = { 'query': request.GET['query'], 'suggestions':suggestions, 'data':data }
+    result = {'query': request.GET['query'],
+              'suggestions': suggestions,
+              'data': data}
 
     return HttpResponse(json.dumps(result), mimetype='application/json')
 
@@ -282,6 +284,7 @@ class VoteTagsView(BaseTagMemberListView):
 #    #return tagged_object_list(request, queryset_or_model=qs, tag=tag,
 #        template_name='laws/vote_list_by_tag.html', extra_context=extra_context)
 #
+
 
 def votes_to_bar_widths(v_count, v_for, v_against):
     """ a helper function to compute presentation widths for user votes bars.
@@ -516,9 +519,13 @@ class BillDetailView (DetailView):
                                                          popular_name=new_popular_name)
             else:
                 return HttpResponseForbidden()
+        elif user_input_type == 'knesset_proposal':
+            kp = KnessetProposal.objects.get(pk=request.POST.get('kp_id'))
+            if not kp.bill:  # kp already has a bill
+                kp.bill = bill
+                kp.save()
         else:
             return HttpResponseBadRequest()
-
 
         return HttpResponseRedirect(".")
 
@@ -746,6 +753,13 @@ class VoteDetailView(DetailView):
              'tags':vote.tags,
             }
         context.update(c)
+
+        # Add bill form
+        if 'bill_form' in kwargs:
+            context['bill_form'] = kwargs['bill_form']
+        else:
+            context['bill_form'] = AttachBillFromVoteForm(vote)
+
         return context
 
     @method_decorator(login_required)
@@ -780,6 +794,26 @@ class VoteDetailView(DetailView):
                                 reasoning = reasoning)
                 usv.save()
 
+        elif user_input_type == 'add-bill':
+            form = AttachBillFromVoteForm(vote,request.POST)
+
+            if form.is_valid():
+                vote_type = form.cleaned_data['vote_type']
+                bill = form.cleaned_data['bill_model']
+
+                if vote_type == 'approve vote':
+                    bill.approval_vote = vote
+
+                elif vote_type == 'first vote':
+                    bill.first_vote = vote
+
+                elif vote_type == 'pre vote':
+                    bill.pre_votes.add(vote)
+
+                bill.update_stage()
+            else:
+                return self.get(request,bill_form=form)
+
         else: # adding an MK (either for or against)
             mk_name = difflib.get_close_matches(request.POST.get('mk_name'), mk_names)[0]
             mk = Member.objects.get(name=mk_name)
@@ -811,10 +845,9 @@ class VoteDetailView(DetailView):
 #    except Http404:
 #        return object_list(request, queryset=Vote.objects.none(), extra_context={'title':title})
 
-def vote_auto_complete(request):
-    if request.method != 'GET':
-        raise Http404
 
+@require_http_methods(["GET"])
+def vote_auto_complete(request):
     if not 'query' in request.GET:
         raise Http404
 
@@ -828,9 +861,38 @@ def vote_auto_complete(request):
         data.append(i.id)
         suggestions.append(title)
 
-    result = { 'query': request.GET['query'], 'suggestions':suggestions, 'data':data }
+    result = {'query': request.GET['query'],
+              'suggestions': suggestions,
+              'data': data}
 
     return HttpResponse(json.dumps(result), mimetype='application/json')
+
+
+@require_http_methods(["GET"])
+def knesset_proposal_auto_complete(request):
+    if not 'query' in request.GET:
+        raise Http404
+
+    q = request.GET['query']
+    options = KnessetProposal.objects.filter(
+        Q(booklet_number=q) |
+        Q(title__icontains=q) |
+        Q(law__title__icontains=q))[:30]
+
+    data = []
+    suggestions = []
+    for i in options:
+        formatted_date = i.date.strftime('%d/%m/%Y')
+        title = u'{0} - {1} - {2}'.format(formatted_date, i.law.title, i.title)
+        data.append(i.id)
+        suggestions.append(title)
+
+    result = {'query': request.GET['query'],
+              'suggestions': suggestions,
+              'data': data}
+
+    return HttpResponse(json.dumps(result), mimetype='application/json')
+
 
 def embed_bill_details(request, object_id):
     # TODO(shmichael): Only use the last stream item of each type, and if we find

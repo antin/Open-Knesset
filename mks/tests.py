@@ -5,6 +5,7 @@ from django.test.client import Client
 from django.core.urlresolvers import reverse
 from django.contrib.auth.models import User, AnonymousUser
 from django.contrib.sites.models import Site
+from tastypie.test import ResourceTestCase
 from actstream import follow,action
 from actstream.models import Action
 from mks.models import Member, Party, Membership, MemberAltname, Knesset
@@ -14,6 +15,7 @@ from committees.models import CommitteeMeeting,Committee
 from knesset.utils import RequestFactory
 import datetime
 import feedparser
+import json
 from backlinks.tests.xmlrpc import TestClientServerProxy
 from xmlrpclib import Fault, loads
 from urllib import urlencode
@@ -21,7 +23,7 @@ from backlinks.models import InboundBacklink
 from backlinks.pingback.server import PingbackServer
 from django import template
 from mks.mock import PINGABLE_MEMBER_ID, NON_PINGABLE_MEMBER_ID
-from django.utils import simplejson as json
+from persons.models import Person, PersonAlias
 
 TRACKBACK_CONTENT_TYPE = 'application/x-www-form-urlencoded; charset=utf-8'
 
@@ -102,19 +104,6 @@ class MemberViewsTest(TestCase):
                                 'mks/member_detail.html')
         self.assertEqual(res.context['object'].id, self.mk_1.id)
 
-    def testMemberSearch(self):
-        res = self.client.get(reverse('member-handler'),
-                                      {'q': 'mk_'},
-                                      HTTP_X_REQUESTED_WITH='XMLHttpRequest')
-        p = json.loads(res.content)
-        self.assertEqual(set(map(lambda x: x['id'], p)), set((self.mk_1.id, self.mk_2.id)))
-
-        res = self.client.get(reverse('member-handler'),
-                                      {'q': 'mk_1'},
-                                      HTTP_X_REQUESTED_WITH='XMLHttpRequest')
-        p = json.loads(res.content)
-        self.assertEqual(map(lambda x:x['id'], p), [self.mk_1.id])
-
     def testPartyList(self):
         # party list should redirect to stats by seat
         res = self.client.get(reverse('party-list'))
@@ -130,19 +119,6 @@ class MemberViewsTest(TestCase):
                               args=[self.party_1.id]))
         self.assertTemplateUsed(res, 'mks/party_detail.html')
         self.assertEqual(res.context['object'].id, self.party_1.id)
-
-    def testPartySearch(self):
-        res = self.client.get(reverse('party-handler'),
-                                      {'q': 'party'},
-                                      HTTP_X_REQUESTED_WITH='XMLHttpRequest')
-        p = json.loads(res.content)
-        self.assertEqual(set(map(lambda x: x['id'], p)), set((self.party_1.id,self.party_2.id)))
-
-        res = self.client.get(reverse('party-handler'),
-                                      {'q': 'party%201'},
-                                      HTTP_X_REQUESTED_WITH='XMLHttpRequest')
-        p = json.loads(res.content)
-        self.assertEqual(map(lambda x:x['id'], p), [self.party_1.id])
 
     def testMemberDetailsContext(self):
 
@@ -214,13 +190,6 @@ class MemberViewsTest(TestCase):
         self.assertEqual(res.status_code,200)
         parsed = feedparser.parse(res.content)
         self.assertEqual(len(parsed['entries']),0)
-
-    def testPartyAPI(self):
-        res = self.client.get(reverse('party-handler')) #, kwargs={'object_id': self.mk_1.id}),{'verbs':'posted'})
-        self.assertEqual(res.status_code,200)
-        parties = json.loads(res.content)
-        self.assertEqual(map(lambda x:x['id'], parties), [self.party_1.id, self.party_2.id])
-
 
     def tearDown(self):
         self.party_1.delete()
@@ -449,6 +418,7 @@ class MemberBacklinksViewsTest(TestCase):
                           excerpt,
                           'Server did not use excerpt from ping request when registering')
 
+
     def tearDown(self):
         self.party_1.delete()
         self.party_2.delete()
@@ -456,6 +426,37 @@ class MemberBacklinksViewsTest(TestCase):
         self.mk_2.delete()
         self.jacob.delete()
 
+class MemberAPITests(ResourceTestCase):
+    def setUp(self):
+        super(MemberAPITests, self).setUp()
+
+        d = datetime.date.today()
+        self.knesset = Knesset.objects.create(
+            number=1,
+            start_date=d-datetime.timedelta(10))
+        self.party_1 = Party.objects.create(name='party 1',
+                                            knesset=self.knesset)
+        self.mk_1 = Member.objects.create(name='mk_1',
+                                          start_date=datetime.date(2010,1,1),
+                                          current_party=self.party_1,
+                                          backlinks_enabled=True)
+        PersonAlias.objects.create(name="mk_1_alias",
+                                   person=Person.objects.get(mk=self.mk_1))
+    def testSimpleGet(self):
+        res1 = self.api_client.get('/api/v2/member/', data={'name': 'mk_1'})
+        self.assertValidJSONResponse(res1)
+        ret = self.deserialize(res1)
+        self.assertEqual(ret['meta']['total_count'], 1)
+
+    def testAliases(self):
+        res1 = self.api_client.get('/api/v2/member/', data={'name': 'mk_1'}, format='json')
+        self.assertValidJSONResponse(res1)
+        res2 = self.api_client.get('/api/v2/member/', data={'name': 'mk_1_alias'}, format='json')
+        self.assertValidJSONResponse(res2)
+        self.assertEqual(self.deserialize(res1), self.deserialize(res2))
+
+    def tearDown(self):
+        self.mk_1.delete()
 
 class MemberModelsTests(TestCase):
 

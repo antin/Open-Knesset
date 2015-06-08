@@ -1,4 +1,5 @@
 import csv, random, tagging, logging
+import json
 from actstream import action
 from annotatetext.views import post_annotation as annotatetext_post_annotation
 from django.conf import settings
@@ -12,7 +13,6 @@ from django.http import (
     HttpResponseNotAllowed, HttpResponseBadRequest, Http404, HttpResponsePermanentRedirect)
 from django.shortcuts import render_to_response, get_object_or_404
 from django.template import RequestContext
-from django.utils import simplejson as json
 from django.utils.translation import ugettext as _
 from django.views.generic import TemplateView, DetailView, ListView
 from django.views.generic.list import BaseListView
@@ -28,6 +28,8 @@ from laws.models import Vote, Bill
 from mks.models import Member, Knesset
 from tagging.utils import get_tag
 from auxiliary.models import TagSynonym
+
+from okscraper_django.models import ScraperRun, ScraperRunLog
 
 
 class BaseTagMemberListView(ListView):
@@ -86,6 +88,26 @@ class BaseTagMemberListView(ListView):
             context['watched_members'] = False
 
         return context
+
+
+class MainScraperStatusView(ListView):
+    queryset = ScraperRun.objects.all().order_by('-start_time')
+    template_name = 'auxiliary/main_scraper_status.html'
+
+    def get_context_data(self, *args, **kwargs):
+        context = super(ListView, self).get_context_data(*args, **kwargs)
+        for object in context['object_list']:
+            status = 'SUCCESS'
+            failedLogs = object.logs.exclude(status = 'INFO')
+            if failedLogs.count() > 0:
+                status = failedLogs.order_by('-id')[0].status
+            object.status = status
+        return context
+
+
+class ScraperRunDetailView(DetailView):
+    model = ScraperRun
+    template_name = 'auxiliary/scraper_run_detail.html'
 
 
 logger = logging.getLogger("open-knesset.auxiliary.views")
@@ -187,13 +209,35 @@ def main(request):
 
     NUMOF_EVENTS = 8
     events = Event.objects.get_upcoming()
+
+    # Reduce the number of sql queries, by prefetching the objects and setting
+    # them on the objects
+    upcoming = list(events[:NUMOF_EVENTS])
+
+    generics = {}
+    for item in upcoming:
+        if item.which_pk:
+            generics.setdefault(item.which_type_id, set()).add(item.which_pk)
+
+    content_types = ContentType.objects.in_bulk(generics.keys())
+
+    relations = {}
+    for ct, fk_list in generics.items():
+        ct_model = content_types[ct].model_class()
+        relations[ct] = ct_model.objects.in_bulk(list(fk_list))
+
+    for item in upcoming:
+        if item.which_pk:
+            setattr(item, '_which_object_cache',
+                    relations[item.which_type_id].get(item.which_pk))
+
     context = {
         'title': _('Home'),
         'hide_crumbs': True,
         'is_index': True,
         'tidbits': Tidbit.active.all().order_by('?'),
         'suggestion_forms': {'tidbit': TidbitSuggestionForm()},
-        'events': events[:NUMOF_EVENTS],
+        'events': upcoming,
         'INITIAL_EVENTS': NUMOF_EVENTS,
         'events_more': events.count() > NUMOF_EVENTS,
     }
@@ -365,6 +409,16 @@ def create_tag_and_add_to_item(request, app, object_type, object_id):
         return _add_tag_to_object(request.user, app, object_type, object_id, tag)
     else:
         return HttpResponseNotAllowed(['POST'])
+
+
+@permission_required('tagging.add_tag')
+def add_tag_synonym(request, parent_tag_id, synonym_tag_id):
+    parent_tag = Tag.objects.get(pk=parent_tag_id)
+    synonym_tag = Tag.objects.get(pk=synonym_tag_id)
+    assert parent_tag.synonym_synonym_tag.count() == 0
+    assert synonym_tag != parent_tag
+    TagSynonym.objects.create(tag_id = parent_tag_id, synonym_tag_id=synonym_tag_id)
+    return HttpResponse('ok')
 
 
 def calculate_cloud_from_models(*args):

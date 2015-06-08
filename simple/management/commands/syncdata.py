@@ -25,6 +25,8 @@ import parse_presence, parse_laws, mk_roles_parser, parse_remote
 from parse_gov_legislation_comm import ParseGLC
 
 from syncdata_globals import p_explanation,strong_explanation,explanation
+from plenum.management.commands.parse_plenum_protocols_subcommands.download \
+    import _antiword
 
 ENCODING = 'utf8'
 
@@ -199,7 +201,7 @@ class Command(NoArgsCommand):
                 continue
 
             # add the current member's vote
-            va,created = VoteAction.objects.get_or_create(vote = v, member = m, type = vote)
+            va,created = VoteAction.objects.get_or_create(vote = v, member = m, type = vote, party = m.current_party)
             if created:
                 va.save()
 
@@ -292,7 +294,7 @@ class Command(NoArgsCommand):
         logger.debug("last member id found in local files is %d. " % self.last_downloaded_member_id)
         f.close()
 
-    def get_members_data(self, max_mk_id=1000):
+    def get_members_data(self, max_mk_id=1000, min_mk_id=1):
         """downloads members data to local files
         """
         # TODO - find max member id in knesset website and use for max_mk_id
@@ -309,8 +311,13 @@ class Command(NoArgsCommand):
 
         fields = [unicode(field.decode('utf8')) for field in fields]
 
-        for id in range(1,max_mk_id):
-            m = mk_parser.MKHtmlParser(id).Dict
+        for id in range(min_mk_id,max_mk_id):
+            logger.debug('mk %s'%id)
+            try:
+                m = mk_parser.MKHtmlParser(id).Dict
+            except UnicodeDecodeError as e:
+                logger.error('unicode decode error at mk id %s'%id)
+                m = {}
             if (m.has_key('name') and m['name'] != None): name = m['name'].replace(u'\xa0',u' ').encode(ENCODING).replace('&nbsp;',' ')
             else: continue
             f.write("%d\t%s\t" % (id, name))
@@ -618,7 +625,7 @@ class Command(NoArgsCommand):
 
                 # add the current member's vote
 
-                va,created = VoteAction.objects.get_or_create(vote = v, member = m, type = vote)
+                va,created = VoteAction.objects.get_or_create(vote = v, member = m, type = vote, party = m.current_party)
                 if created:
                     va.save()
 
@@ -798,6 +805,14 @@ class Command(NoArgsCommand):
                     else:
                         subject = span[span.find(r'>')+1:] # no table, just take the text
             else: # we are parsing a matched link - comittee protocol url
+                if (link.find(r'.doc') > 0):
+                    logger.debug('doc found')
+                    html_url = link.split("'")[1]
+                    # this is the last info we need, so add data to results
+                    res.append([date_text, comittee, subject, html_url])
+                    date_text = ''
+                    comittee = ''
+                    subject = ''
                 if (link.find(r'html')>0)or(link.find(r'rtf')>0):
                     html_url = FILES_BASE_URL + re.search(r"'\.\./([^']*)'", link).group(1)
                     res.append([date_text, comittee, subject, html_url]) # this is the last info we need, so add data to results
@@ -905,7 +920,7 @@ class Command(NoArgsCommand):
 
     def get_committee_protocol_text(self, url):
         logger.debug('get_committee_protocol_text. url=%s' % url)
-        if url.find('html'):
+        if url.find('html') >= 0:
             url = url.replace('html','rtf')
         file_str = StringIO()
         count = 0
@@ -918,6 +933,22 @@ class Command(NoArgsCommand):
                 count += 1
         if flag:
             logger.error("can't open url %s. tried %d times" % (url, count))
+
+        if url.find(".rtf") >= 0:
+            return self.handle_rtf_protocol(file_str)
+        if url.find(".doc") >= 0:
+            return self.handle_doc_protocol(file_str)
+
+    def handle_doc_protocol(self, file_str):
+        fname = DATA_ROOT + 'comm_p/comm_p.doc'
+        f = open(fname, 'wb')
+        file_str.seek(0)
+        f.write(file_str.read())
+        f.close()
+        x = _antiword(fname)
+        return re.sub('[\n ]{2,}', '\n\n', re.sub('<.*?>','',x))
+
+    def handle_rtf_protocol(self, file_str):
         try:
             doc = Rtf15Reader.read(file_str)
         except Exception:
@@ -1569,8 +1600,11 @@ class Command(NoArgsCommand):
 
         if update:
             update_run_only = options.get('update-run-only', '')
-            if update_run_only != '':
-                update_run_only = update_run_only.split(',')
+            if update_run_only:
+                try:
+                    update_run_only = update_run_only.split(',')
+                except AttributeError, e:
+                    logger.error("Error in syncdata update:" + e)
             else:
                 update_run_only = None
             for func in ['update_votes',
@@ -1584,7 +1618,8 @@ class Command(NoArgsCommand):
                          'update_mks_is_current',
                          'update_gov_law_decisions',
                          'correct_votes_matching']:
-                if update_run_only is not None and func in update_run_only:
+                # in case update_run_only is none, we run all stages
+                if (update_run_only is None) or (func in update_run_only):
                     try:
                         logger.debug('update: running %s', func)
                         self.__getattribute__(func).__call__()

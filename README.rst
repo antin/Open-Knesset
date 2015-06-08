@@ -1,12 +1,18 @@
 .. image:: https://travis-ci.org/hasadna/Open-Knesset.svg?branch=master
     :target: https://travis-ci.org/hasadna/Open-Knesset
-    
+.. image:: https://coveralls.io/repos/hasadna/Open-Knesset/badge.png?branch=master
+  :target: https://coveralls.io/r/hasadna/Open-Knesset?branch=master
+
 .. important::
 
     This document contains quick start instruction.
-    For more details, **please see** the `Open Knesset developers documentation`_ 
+
+    * For detailed documentation **please see** the `Open Knesset developers documentation`_ 
+    * For API and Embedding documentation see `Open Knesset API and embedding`_
+    * Issue Tracker: https://huboard.com/hasadna/Open-Knesset
 
 .. _Open Knesset developers documentation: https://oknesset-devel.readthedocs.org/
+.. _Open Knesset API and embedding: http://oknesset-api.readthedocs.org/
 
 .. contents::
 
@@ -86,8 +92,8 @@ MS Windows
     easy_install pip
     pip install virtualenv
 
-- Download and install the installers matching your architecture for PIL_
-  and lxml_ (version 2.3.x).
+- Download and install the installers matching your architecture for PIL_,
+  lxml_ (version 2.3.x) and ujson_.
 - Download and install `GitHub for Windows`_.
 - Run the GitHub program (should have an icon on the desktop). Sign in
   with your username and password.
@@ -118,6 +124,7 @@ MS Windows
 .. _PIL: http://www.lfd.uci.edu/~gohlke/pythonlibs/#pil
 .. _lxml: http://www.lfd.uci.edu/~gohlke/pythonlibs/#lxml
 .. _GitHub for Windows: http://windows.github.com
+.. _ujson: http://www.lfd.uci.edu/~gohlke/pythonlibs/#ujson
 
 
 OS X

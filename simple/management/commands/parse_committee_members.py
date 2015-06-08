@@ -5,7 +5,7 @@ import re
 import logging
 logger = logging.getLogger("open-knesset.parse_committee_members")
 
-from mks.models import Member
+from mks.models import Member, Knesset
 from committees.models import Committee
 from django.core.management.base import BaseCommand
 
@@ -17,7 +17,8 @@ class Command(BaseCommand):
     def parse_committee_members(self):
         retval = {}
 
-        url = 'http://knesset.gov.il/committees/heb/CommitteeHistoryByKnesset.asp?knesset=19'
+        current_knesset = Knesset.objects.current_knesset().number
+        url = 'http://knesset.gov.il/committees/heb/CommitteeHistoryByKnesset.asp?knesset={}'.format(current_knesset)
 
         data = urllib2.urlopen(url).read()
 

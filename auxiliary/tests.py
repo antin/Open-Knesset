@@ -1,4 +1,5 @@
 import datetime
+import json
 import re
 from django.test import TestCase
 from django.core.urlresolvers import reverse
@@ -12,7 +13,6 @@ from mks.models import Member,Party,WeeklyPresence,Knesset
 from committees.models import Committee
 from agendas.models import Agenda
 from knesset.sitemap import sitemaps
-from django.utils import simplejson as json
 from auxiliary.views import CsvView
 from django.core import cache
 
@@ -146,7 +146,8 @@ class InternalLinksTest(TestCase):
             for link in re.findall("href=\"(.*?)\"",res.content):
                 link = link.lower()
                 self.failUnless(link, "There seems to be an empty link in %s (href='')" % page)
-                if (link in visited_links) or (link.startswith("http")) or link.startswith("#"):
+                if (link in visited_links or link.startswith("http") or
+                        link.startswith("//") or link.startswith("#")):
                     continue
                 if link.startswith("../"):
                     link = '/' + '/'.join(link.split('/')[1:])

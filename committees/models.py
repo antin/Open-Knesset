@@ -10,6 +10,7 @@ from django.utils.text import Truncator
 from django.contrib.contenttypes import generic
 from django.contrib.auth.models import User
 from django.core.cache import cache
+from django.utils.functional import cached_property
 from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.models import ContentType
 from django.conf import settings
@@ -20,6 +21,9 @@ from events.models import Event
 from links.models import Link
 from plenum.create_protocol_parts import create_plenum_protocol_parts
 from mks.models import Knesset
+from lobbyists.models import LobbyistHistory, LobbyistCorporation
+from itertools import groupby
+from hebrew_numbers import gematria_to_int
 
 COMMITTEE_PROTOCOL_PAGINATE_BY = 120
 
@@ -27,7 +31,7 @@ logger = logging.getLogger("open-knesset.committees.models")
 
 class Committee(models.Model):
     name = models.CharField(max_length=256)
-    # comma seperated list of names used as name aliases for harvesting
+    # comma separated list of names used as name aliases for harvesting
     aliases = models.TextField(null=True,blank=True)
     members = models.ManyToManyField('mks.Member', related_name='committees', blank=True)
     chairpersons = models.ManyToManyField('mks.Member', related_name='chaired_committees', blank=True)
@@ -36,20 +40,34 @@ class Committee(models.Model):
        object_id_field="which_pk")
     description = models.TextField(null=True,blank=True)
     portal_knesset_broadcasts_url = models.URLField(max_length=1000, blank=True)
-    type = models.CharField(max_length=10,default='committee')
+    type = models.CharField(max_length=10, default='committee')
+
+    @property
+    def gender_presence(self):
+        # returns a touple of (female_presence, male_presence
+        r={'F': 0, 'M': 0}
+        for cm in self.meetings.all():
+            try:
+                results = groupby(cm.mks_attended.all(), lambda mk: mk.gender)
+            except ValueError:
+                continue
+            for i in results:
+                key, count = i[0], len(list(i[1]))
+                r[key] += count
+        return r['F'], r['M']
 
     def __unicode__(self):
-        if self.type=='plenum':
+        if self.type == 'plenum':
             return "%s" % ugettext('Plenum')
         else:
             return "%s" % self.name
 
     @models.permalink
     def get_absolute_url(self):
-        if self.type=='plenum':
-            return('plenum', [])
+        if self.type == 'plenum':
+            return 'plenum', []
         else:
-            return ('committee-detail', [str(self.id)])
+            return 'committee-detail', [str(self.id)]
 
     @property
     def annotations(self):
@@ -185,6 +203,9 @@ class CommitteeMeeting(models.Model):
     tagged_items = generic.GenericRelation(TaggedItem,
                                            object_id_field="object_id",
                                            content_type_field="content_type")
+    lobbyists_mentioned = models.ManyToManyField('lobbyists.Lobbyist', related_name='committee_meetings')
+    lobbyist_corporations_mentioned = models.ManyToManyField('lobbyists.LobbyistCorporation', related_name='committee_meetings')
+
     objects = CommitteeMeetingManager()
 
     class Meta:
@@ -251,11 +272,11 @@ class CommitteeMeeting(models.Model):
             return # then we don't need to do anything here.
 
         if self.committee.type=='plenum':
-            create_plenum_protocol_parts(self,mks=mks,mk_names=mk_names)
+            create_plenum_protocol_parts(self, mks=mks, mk_names=mk_names)
             return
 
         # break the protocol to its parts
-        # first, fix places where the colon is in the begining of next line
+        # first, fix places where the colon is in the beginning of next line
         # (move it to the end of the correct line)
         protocol_text = []
         for line in re.sub("[ ]+"," ", self.protocol_text).split('\n'):
@@ -279,14 +300,50 @@ class CommitteeMeeting(models.Model):
                     ProtocolPart(meeting=self, order=i,
                         header=header, body='\n'.join(section)).save()
                 i += 1
-                header = re.sub('[\>:]+$','',re.sub('^[\< ]+','',line))
+                header = re.sub('[\>:]+$', '', re.sub('^[\< ]+', '', line))
                 section = []
             else:
-                section.append (line)
+                section.append(line)
 
         # don't forget the last section
-        ProtocolPart(meeting=self, order=i,
-            header=header, body='\n'.join(section)).save()
+        ProtocolPart(meeting=self, order=i, header=header, body='\n'.join(section)).save()
+
+    def redownload_plenum_protocol(self):
+        """utility method to redownload plenum meeting protocol"""
+        from plenum.management.commands.parse_plenum_protocols_subcommands.download import download_for_existing_meeting
+        download_for_existing_meeting(self)
+
+    def reparse_plenum_protocol(self):
+        self.redownload_plenum_protocol()
+        from plenum.management.commands.parse_plenum_protocols_subcommands.parse import parse_for_existing_meeting
+        parse_for_existing_meeting(self)
+
+    @property
+    def plenum_meeting_number(self):
+        res = None
+        parts = self.parts.filter(body__contains=u'ישיבה')
+        if parts.count() > 0:
+            r = re.search(u'ישיבה (.*)$', self.parts.filter(body__contains=u'ישיבה').first().body)
+            if r:
+                res = gematria_to_int(r.groups()[0])
+        return res
+
+    def plenum_link_votes(self):
+        from laws.models import Vote
+        if self.plenum_meeting_number:
+            for vote in Vote.objects.filter(meeting_number=self.plenum_meeting_number):
+                for part in self.parts.filter(header__contains=u'הצבעה'):
+                    r = re.search(r' (\d+)$', part.header)
+                    if r and vote.vote_number == int(r.groups()[0]):
+                        url = part.get_absolute_url()
+                        Link.objects.get_or_create(
+                            object_pk=vote.pk,
+                            content_type=ContentType.objects.get_for_model(Vote),
+                            url = url,
+                            defaults = {
+                                'title': u'לדיון בישיבת המליאה'
+                            }
+                        )
 
     def get_bg_material(self):
         """
@@ -304,7 +361,7 @@ class CommitteeMeeting(models.Model):
         url = 'http://www.knesset.gov.il/agenda/heb/material.asp?c=%s&t=%s&d=%s' % (cid,time,date)
         data = urllib2.urlopen(url)
         bg_links = []
-        if data.url == url: #if no bg material exists we get redirected to a diffrent page
+        if data.url == url: #if no bg material exists we get redirected to a different page
             bgdata = BeautifulSoup(data.read()).findAll('a')
 
             for i in bgdata:
@@ -339,6 +396,24 @@ class CommitteeMeeting(models.Model):
         logger.debug('meeting %d now has %d attending members' % (
             self.id,
             self.mks_attended.count()))
+
+    @cached_property
+    def main_lobbyist_corporations_mentioned(self):
+        ret = []
+        for corporation in self.lobbyist_corporations_mentioned.all():
+            main_corporation = corporation.main_corporation
+            if main_corporation not in ret:
+                ret.append(main_corporation)
+        for lobbyist in self.main_lobbyists_mentioned:
+            corporation = LobbyistCorporation.objects.get(id=lobbyist.cached_data['latest_corporation']['id'])
+            if corporation not in ret and corporation.main_corporation == corporation:
+                ret.append(corporation)
+        return ret
+
+    @cached_property
+    def main_lobbyists_mentioned(self):
+        return self.lobbyists_mentioned.all()
+
 
 class ProtocolPartManager(models.Manager):
     def list(self):

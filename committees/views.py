@@ -1,13 +1,14 @@
 import datetime
+import json
 import re
 
 import colorsys
 import difflib
 import logging
+
 import tagging
 import auxiliary.tag_suggestions
 from actstream import action
-from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.contenttypes.models import ContentType
@@ -17,13 +18,11 @@ from django.http import (HttpResponse, HttpResponseRedirect, Http404,
                          HttpResponseForbidden)
 from django.shortcuts import get_object_or_404, render_to_response
 from django.template import RequestContext
-from django.utils import simplejson as json
 from django.utils.decorators import method_decorator
 from django.utils.translation import ugettext_lazy, ugettext as _
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.generic import DetailView, ListView
 from tagging.models import TaggedItem, Tag
-
 import models
 from models import Committee, CommitteeMeeting, Topic
 from auxiliary.views import GetMoreView, BaseTagMemberListView
@@ -34,6 +33,8 @@ from laws.models import Bill, PrivateProposal
 from links.models import Link
 from mks.models import Member
 from mks.utils import get_all_mk_names
+from mmm.models import Document
+from lobbyists.models import Lobbyist
 
 
 logger = logging.getLogger("open-knesset.committees.views")
@@ -72,6 +73,7 @@ class CommitteeDetailView(DetailView):
     def get_context_data(self, *args, **kwargs):
         context = super(CommitteeDetailView, self).get_context_data(*args, **kwargs)
         cm = context['object']
+        cm.sorted_mmm_documents = cm.mmm_documents.order_by('-publication_date')[:10]
         cached_context = cache.get('committee_detail_%d' % cm.id, {})
         if not cached_context:
             cached_context['chairpersons'] = cm.chairpersons.all()
@@ -138,6 +140,9 @@ class MeetingDetailView(DetailView):
         meeting_text = [cm.topics] + [part.body for part in cm.parts.all()]
         context['tag_suggestions'] = auxiliary.tag_suggestions.extract_suggested_tags(cm.tags, meeting_text)
 
+        context['mentioned_lobbyists'] = cm.main_lobbyists_mentioned
+        context['mentioned_lobbyist_corporations'] = cm.main_lobbyist_corporations_mentioned
+
         return context
 
     @hashnav_method_decorator(login_required)
@@ -196,6 +201,16 @@ class MeetingDetailView(DetailView):
                         description=cm,
                         target=mk,
                         timestamp=datetime.datetime.now())
+
+        if user_input_type == 'add-lobbyist':
+            l = Lobbyist.objects.get(person__name=request.POST.get(
+                'lobbyist_name'))
+            cm.lobbyists_mentioned.add(l)
+
+        if user_input_type == 'remove-lobbyist':
+            l = Lobbyist.objects.get(person__name=request.POST.get(
+                'lobbyist_name'))
+            cm.lobbyists_mentioned.remove(l)
 
         if user_input_type == "protocol":
             if not cm.protocol_text:  # don't override existing protocols
@@ -356,11 +371,15 @@ class MeetingsListView(ListView):
         return qs
 
 
+def parse_date(date_string):
+    return datetime.datetime.strptime(date_string, '%Y-%m-%d').date()
+
+
 def meeting_list_by_date(request, *args, **kwargs):
     committee_id = kwargs.get('committee_id')
     date_string = kwargs.get('date')
     try:
-        date = datetime.datetime.strptime(date_string, '%Y-%m-%d').date()
+        date = parse_date(date_string)
     except:
         raise Http404()
     context = {}
@@ -460,3 +479,30 @@ def delete_topic_rating(request, object_id):
         topic.rating.delete(request.user, request.META['REMOTE_ADDR'])
         return HttpResponse('Vote deleted.')
 
+
+class CommitteeMMMDocuments(ListView):
+    paginate_by = 20
+    allow_empty = True
+    template_name = 'committees/committee_mmm_documents.html'
+
+    def get_queryset(self):
+        self.c_id = self.kwargs.get('committee_id')
+        date = self.kwargs.get('date', None)
+        if date:
+            try:
+                date = parse_date(date)
+                documents = Document.objects.filter(req_committee__id=self.c_id,
+                                                    publication_date=date).order_by('-publication_date')
+            except:
+                raise
+        else:
+            documents = Document.objects.filter(req_committee__id=self.c_id).order_by('-publication_date')
+        return documents
+
+    def get_context_data(self, **kwargs):
+        context = super(CommitteeMMMDocuments, self).get_context_data(**kwargs)
+        committee = Committee.objects.get(id=self.c_id)
+        context['committee'] = committee.name
+        context['committee_id'] = self.c_id
+        context['committee_url'] = committee.get_absolute_url()
+        return context

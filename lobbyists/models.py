@@ -4,6 +4,10 @@ from django.db import models
 from django.core.cache import cache
 from django.utils.functional import cached_property
 from django.utils.translation import ugettext as _
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes import generic
+import json
+
 
 class LobbyistHistoryManager(models.Manager):
 
@@ -61,6 +65,10 @@ class Lobbyist(models.Model):
     """
     person = models.ForeignKey('persons.Person', blank=True, null=True, related_name='lobbyist')
     source_id = models.CharField(blank=True, null=True, max_length=20)
+    description = models.TextField(blank=True, null=True)
+    image_url = models.URLField(blank=True, null=True, help_text="This image dimensions should be 75x110, it will be displayed on lists of lobbyists")
+    large_image_url = models.URLField(blank=True, null=True, help_text="This image can be larger and will be displayed in the lobbyist page")
+
 
     @cached_property
     def latest_data(self):
@@ -68,7 +76,11 @@ class Lobbyist(models.Model):
 
     @cached_property
     def latest_corporation(self):
-        return self.lobbyistcorporationdata_set.filter(scrape_time__isnull=False).latest('scrape_time').corporation
+        return self.lobbyistcorporationdata_set.filter(
+            scrape_time__isnull=False)\
+            .select_related('corporation')\
+            .latest('scrape_time')\
+            .corporation
 
     @cached_property
     def cached_data(self):
@@ -93,7 +105,7 @@ class Lobbyist(models.Model):
         return data
 
     def __unicode__(self):
-        return self.person
+        return unicode(self.person)
 
 
 class LobbyistDataManager(models.Manager):
@@ -150,6 +162,7 @@ class LobbyistCorporation(models.Model):
     """
     name = models.CharField(blank=True, null=True, max_length=100)
     source_id = models.CharField(blank=True, null=True, max_length=20)
+    description = models.TextField(blank=True, null=True)
 
     objects = LobbyistCorporationManager()
 
@@ -196,8 +209,25 @@ class LobbyistCorporation(models.Model):
             cache.set('LobbyistCorporation_cached_data_%s' % self.id, data, 86400)
         return data
 
+    @cached_property
+    def main_corporation(self):
+        lcas =  LobbyistCorporationAlias.objects.filter(main_corporation = self)
+        if lcas.count() > 0:
+            return self
+        else:
+            lcas = LobbyistCorporationAlias.objects.filter(alias_corporation = self)
+            if lcas.count() > 0:
+                for lca in lcas:
+                    return lca.main_corporation
+            else:
+                return self
+
     def clear_cache(self):
         cache.delete('LobbyistCorporation_cached_data_%s' % self.id)
+
+    @models.permalink
+    def get_absolute_url(self):
+        return ('lobbyist-corporation', [str(self.id)])
 
     def __unicode__(self):
         return self.name
@@ -242,7 +272,7 @@ class LobbyistCorporationData(models.Model):
     def __unicode__(self):
         return self.name
 
-    
+
 class LobbyistRepresent(models.Model):
     """
     this model represents a single represent record and is connected to the LobbyistData represents field
@@ -261,7 +291,7 @@ class LobbyistRepresent(models.Model):
     def __unicode__(self):
         return self.latest_data.name
 
-        
+
 class LobbyistRepresentData(models.Model):
     """
     the lobbyist represents data, related to LobbyistRepresent model
@@ -273,3 +303,24 @@ class LobbyistRepresentData(models.Model):
     name = models.CharField(blank=True, null=True, max_length=100)
     domain = models.CharField(blank=True, null=True, max_length=100)
     type = models.CharField(blank=True, null=True, max_length=100)
+
+
+class LobbyistsChange(models.Model):
+    """
+    this model records the changes in lobbyist data
+    """
+    date = models.DateField()
+    type = models.CharField(max_length=20, choices=(
+        ('added', 'Added'),
+        ('deleted', 'Deleted'),
+        ('modified', 'Modified'),
+    ))
+    content_type = models.ForeignKey(ContentType)
+    object_id = models.PositiveIntegerField()
+    content_object = generic.GenericForeignKey('content_type', 'object_id')
+    # this field contains a json dumps of the change diff
+    # relevant only for modified type
+    extra_data = models.TextField(null=True, blank=True)
+
+    def __unicode__(self):
+        return u'Lobbyists Change: {date} - {content_type} - {object} - {type}'.format(date=self.date, content_type=self.content_type, object=self.content_object, type=self.type)

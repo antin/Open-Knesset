@@ -20,6 +20,20 @@ NOTIFICATION_PERIOD_CHOICES = (
     (u'W', _('Weekly')),
 )
 
+
+class UserCustomMetadata(models.Model):
+    """
+    This is used to store custom metadata for the user
+    it allows for key-value storage of arbitrary data
+    the app_id field is just a way to separate between apps that use this storage
+    """
+    user = models.ForeignKey('UserProfile', related_name='custom_metadata')
+    app_id = models.CharField(max_length=20)
+    k = models.CharField(max_length=50)
+    v = models.TextField(blank=True, null=True)
+    updated = models.DateTimeField(auto_now=True)
+
+
 class UserProfile(models.Model):
     '''
     This model is extending the builtin user model.
@@ -55,7 +69,7 @@ class UserProfile(models.Model):
         if related:
             lst = lst.prefetch_related(*related)
         return [x.actor for x in lst]
-    
+
     @property
     def members(self):
         return self.get_actors(Member, 'actor')
@@ -80,10 +94,6 @@ class UserProfile(models.Model):
     @property
     def topics(self):
         return self.get_actors(Topic, 'actor')
-
-
-    def get_badges(self):
-        return self.badges.all()
 
     @models.permalink
     def get_absolute_url(self):
